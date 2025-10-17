@@ -216,7 +216,7 @@ jobs:
         run: |
           dir 
           cd quick-print/test-prj
-          pulltestdata.bat
+          #pulltestdata.bat
           git clone https://oauth2:${{ secrets.MYUSER_TOKEN }}@github.com/quickprint-soft/quick-print-test-data.git
           cd ../quick-print/librel64
           gtest_run.exe --gtest_output=xml:report.xml
