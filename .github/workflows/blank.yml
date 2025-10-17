@@ -212,10 +212,12 @@ jobs:
         
 
       - name: test_run
+        shell: cmd
         run: |
+          dir 
           cd quick-print/test-prj
           pulltestdata.bat
-          cd quick-print/librel64
+          cd ../quick-print/librel64
           gtest_run.exe --gtest_output=xml:report.xml
           dir
 
