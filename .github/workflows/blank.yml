@@ -215,9 +215,13 @@ jobs:
         shell: cmd
         run: |
           dir 
-          dir quick-print/librel64
+          cd quick-print
+          dir 
+          # dir quick-print\librel64
+          cd librel64
+          dir 
           
-          cd quick-print/test-prj
+          cd quick-print\test-prj
           #pulltestdata.bat
           git clone https://oauth2:${{ secrets.MYUSER_TOKEN }}@github.com/quickprint-soft/quick-print-test-data.git
           cd ../quick-print/librel64
