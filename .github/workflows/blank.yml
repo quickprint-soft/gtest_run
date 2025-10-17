@@ -37,22 +37,22 @@ jobs:
           ssh-private-key: ${{ secrets.SSH_KEY }}
 
           
-      - name: Cache SSH known hosts
-        id: cache-ssh-hosts
-        uses: actions/cache@v3
-        with:
-          path: ~/.ssh/known_hosts
-          key: ssh-known-hosts-${{ runner.os }}-v1
-          restore-keys: |
-            ssh-known-hosts-${{ runner.os }}-
+      # - name: Cache SSH known hosts
+      #   id: cache-ssh-hosts
+      #   uses: actions/cache@v3
+      #   with:
+      #     path: ~/.ssh/known_hosts
+      #     key: ssh-known-hosts-${{ runner.os }}-v1
+      #     restore-keys: |
+      #       ssh-known-hosts-${{ runner.os }}-
             
-      - name: Add Gitee to known hosts
-        if: steps.cache-ssh-hosts.outputs.cache-hit != 'true'
-        shell: pwsh
-        run: |
-          New-Item -Path $HOME\.ssh -ItemType Directory -Force
-          ssh-keyscan gitee.com >> $HOME\.ssh\known_hosts
-          ssh-keyscan github.com >> $HOME\.ssh\known_hosts
+      # - name: Add Gitee to known hosts
+      #   if: steps.cache-ssh-hosts.outputs.cache-hit != 'true'
+      #   shell: pwsh
+      #   run: |
+      #     New-Item -Path $HOME\.ssh -ItemType Directory -Force
+      #     ssh-keyscan gitee.com >> $HOME\.ssh\known_hosts
+      #     ssh-keyscan github.com >> $HOME\.ssh\known_hosts
           
     
       - uses: lukka/get-cmake@latest
