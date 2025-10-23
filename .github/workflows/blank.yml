@@ -176,24 +176,24 @@ jobs:
           # cmake -S . -B cbuild/ -DCRASHPAD_BUILD_EXAMPLES=TRUE -DCMAKE_CXX_COMPILER=cl.exe -DCMAKE_C_COMPILER=cl.exe -DCMAKE_BUILD_TYPE=Release
           # cmake --build cbuild/ --config Release -- /p:Configuration=Release
           
-      - name: Build WebView
-        run: |
-          pwd
-          dir 
-          cd quick-print/WebView
-          mkdir build
-          cd build
-          cmake ../ -DBUILD_WXWIDGETS_EXAMPLES=ON -DBUILD_WEBVIEW_EXAMPLES=ON -DBUILD_ADVANCED_WXWIDGETS_EXAMPLE=ON
-          cmake --build .
-      - name: Build Office
-        run: |
-          pwd 
-          dir 
-          cd quick-print/officeConvert
-          mkdir build
-          cd build
-          cmake ../ BUILD_OFFICE_CONVERT_LIB=ON -DBUILD_TESTS=ON -DENABLE_GTEST=ON BUILD_OFFICE_CONVERT_DLL=ON BUILD_OFFICE_CONV_TOOL=ON BUILD_GUI_ASYNC_EXAMPLE=ON
-          cmake --build .
+      # - name: Build WebView
+      #   run: |
+      #     pwd
+      #     dir 
+      #     cd quick-print/WebView
+      #     mkdir build
+      #     cd build
+      #     cmake ../ -DBUILD_WXWIDGETS_EXAMPLES=ON -DBUILD_WEBVIEW_EXAMPLES=ON -DBUILD_ADVANCED_WXWIDGETS_EXAMPLE=ON
+      #     cmake --build .
+      # - name: Build Office
+      #   run: |
+      #     pwd 
+      #     dir 
+      #     cd quick-print/officeConvert
+      #     mkdir build
+      #     cd build
+      #     cmake ../ BUILD_OFFICE_CONVERT_LIB=ON -DBUILD_TESTS=ON -DENABLE_GTEST=ON BUILD_OFFICE_CONVERT_DLL=ON BUILD_OFFICE_CONV_TOOL=ON BUILD_GUI_ASYNC_EXAMPLE=ON
+      #     cmake --build .
 
 
       # - name: test cat1
@@ -227,6 +227,39 @@ jobs:
           cd ../quick-print/librel64
           gtest_run.exe --gtest_output=xml:report.xml
           dir
+
+      - name: Show gtest XML in log (first 200 lines)
+        if: always()
+        shell: pwsh
+        run: |
+          $path = "quick-print/librel64/report.xml"
+          if (Test-Path $path) {
+            Write-Host "===== Begin report.xml (truncated) ====="
+            Get-Content $path -TotalCount 200 | ForEach-Object { Write-Host $_ }
+            Write-Host "===== End report.xml snippet ====="
+          } else { Write-Host "report.xml not found at $path" }
+
+      - name: Generate Markdown summary
+        if: always()
+        shell: bash
+        run: |
+          python generate_gtest_md.py --xml quick-print/librel64/report.xml --summary-env --max-fail 100 --truncate-message 400
+
+      - name: Upload test report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtest-report
+          path: quick-print/librel64/report.xml
+          retention-days: 7
+
+      - name: Publish Test Results (JUnit)
+        if: always()
+        uses: mikepenz/action-junit-report@v4
+        with:
+          report_paths: quick-print/librel64/report.xml
+          require_tests: true
+          annotate_only: true
 
       # - name: Inno Package
       #   shell: cmd
