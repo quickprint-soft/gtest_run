@@ -28,6 +28,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-fail", type=int, default=50, help="Max failing testcases to list (default 50, 0=none, -1=all)")
     p.add_argument("--truncate-message", type=int, default=300, help="Max chars per failure message")
     p.add_argument("--show-passed", action="store_true", help="Also list passed testcases (can be noisy)")
+    p.add_argument("--no-emoji", action="store_true", help="Do not use emoji in status line (ASCII only)")
     return p.parse_args()
 
 
@@ -109,7 +110,11 @@ def main():
                     passed_cases.append(full_name)
 
     passed_total = total_tests - total_fail - total_err - total_skip
-    status = "✅ All Passed" if (total_fail + total_err) == 0 else "❌ Failures" if total_fail else "⚠️ Errors" if total_err else "⚠️ Issues"
+    if args.no_emoji:
+        status = "ALL PASSED" if (total_fail + total_err) == 0 else "FAILURES" if total_fail else "ERRORS" if total_err else "ISSUES"
+    else:
+        # Use emoji; some Windows consoles might not support them (we'll handle later)
+        status = "✅ All Passed" if (total_fail + total_err) == 0 else "❌ Failures" if total_fail else "⚠️ Errors" if total_err else "⚠️ Issues"
 
     md_lines = []
     md_lines.append("# GTest Summary")
@@ -150,6 +155,29 @@ def main():
 
     markdown = "\n".join(md_lines) + "\n"
 
+    # Try to ensure stdout is UTF-8 to avoid UnicodeEncodeError on Windows GitHub runners
+    try:
+        if not args.no_emoji and hasattr(sys.stdout, "reconfigure"):
+            # Only attempt if we still have emoji; if user disabled emoji it's ASCII safe
+            sys.stdout.reconfigure(encoding="utf-8")  # Python 3.7+
+    except Exception:
+        pass
+
+    def safe_print(text: str):
+        try:
+            print(text)
+        except UnicodeEncodeError:
+            # Fallback: remove/replace emoji and unencodable chars
+            ascii_fallback = text
+            # Simple replacements
+            ascii_fallback = (ascii_fallback
+                              .replace("✅", "[PASS]")
+                              .replace("❌", "[FAIL]")
+                              .replace("⚠️", "[WARN]"))
+            enc = sys.stdout.encoding or "cp1252"
+            ascii_fallback = ascii_fallback.encode(enc, errors="replace").decode(enc, errors="replace")
+            print(ascii_fallback)
+
     # Write to --out if provided
     if args.out:
         out_path = Path(args.out)
@@ -167,7 +195,7 @@ def main():
             print("[WARN] $GITHUB_STEP_SUMMARY not set; skipping append")
 
     # Always print to stdout so user can redirect or inspect
-    print(markdown)
+    safe_print(markdown)
 
 
 if __name__ == "__main__":
