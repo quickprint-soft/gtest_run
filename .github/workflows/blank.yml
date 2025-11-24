@@ -1,27 +1,18 @@
-name: CI
+name: GTest CI/CD Pipeline
+
 on:
   repository_dispatch:
-    types:
-      - quick_print
+      types:
+        - gtest_quick_print
   push:
-    branches: [ master ]
+    branches: [ main, develop, master ]
   pull_request:
-    branches: [ master ]  
-env:
-# game
-  # DEFAULT_DDING_SECRET: 'SEC618a0dffd91ebf7db4c9c00e2a82b863bc6181858cadbdbf1655ca6dcd2fd1cc'
-  # DEFAULT_DDING_TOKEN: '4e27925ce9df0372171763c071b36bb442cdbf296f315484b9cb165f331da225'
-  DEFAULT_DDING_SECRET: 'SECbe4003c4d14c740788cf9383fa1d8d77c029a03e6df99dde528274b9bcc17926'
-  DEFAULT_DDING_TOKEN: 'fd87df4f83611b4c4cf31d5ad48f890f9603b57b1cac3d52fb80df8b86a5b629'
+    branches: [ main, develop, master ]
+  workflow_dispatch:  # 允许手动触发
 
-concurrency:
-  group: build-latest
-  cancel-in-progress: true
-  
 jobs:
-  msw-msvs:
-    runs-on: windows-${{ matrix.vsversion }}
-    name: wxMSW vs${{ matrix.vsversion }} ${{ matrix.configuration }} ${{ matrix.platform }}
+  build-and-test:
+    runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
@@ -29,409 +20,282 @@ jobs:
           - configuration: 'Release'
             platform: 'x64'
             vsversion: 2022
+    
     steps:
 
-      - name: Setup SSH
-        uses: webfactory/ssh-agent@v0.5.3
-        with:
-          ssh-private-key: ${{ secrets.SSH_KEY }}
+    - name: 设置东八区时区 (Windows)
+      shell: pwsh
+      run: |
+        tzutil /l | findstr /C:"China Standard Time"
+        tzutil /g
+        tzutil /s "China Standard Time"
+        tzutil /g
+        
+    - name: Setup SSH
+      uses: webfactory/ssh-agent@v0.5.3
+      with:
+        ssh-private-key: ${{ secrets.SSH_KEY }}
+      
+    - name: 📥 检出代码
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive  # 如果有子模块
+        
+    # - name: 🐍 设置 Python 环境
+    #   uses: actions/setup-python@v5
+    #   with:
+    #     python-version: '3.11'
+    #     cache: 'pip'  # 缓存 pip 依赖
+        
+    - name: 🔧 配置 MSVC 编译器
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+        
+    - name: Clone repository from Gitee with trace
+      shell: pwsh
+      run: |
+        #git clone https://oauth2:${{ secrets.MYUSER_TOKEN }}@github.com/quickprint-soft/quick-print.git
+        git clone https://oauth2:${{ secrets.MYUSER_TOKEN }}@${{ github.event.client_payload.gitaddress }}
+      
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v2
 
-          
-      # - name: Cache SSH known hosts
-      #   id: cache-ssh-hosts
-      #   uses: actions/cache@v3
-      #   with:
-      #     path: ~/.ssh/known_hosts
-      #     key: ssh-known-hosts-${{ runner.os }}-v1
-      #     restore-keys: |
-      #       ssh-known-hosts-${{ runner.os }}-
-            
-      # - name: Add Gitee to known hosts
-      #   if: steps.cache-ssh-hosts.outputs.cache-hit != 'true'
-      #   shell: pwsh
-      #   run: |
-      #     New-Item -Path $HOME\.ssh -ItemType Directory -Force
-      #     ssh-keyscan gitee.com >> $HOME\.ssh\known_hosts
-      #     ssh-keyscan github.com >> $HOME\.ssh\known_hosts
-          
+    - name: get test case
+      shell: cmd
+      run: |
+        set PYTHONIOENCODING=utf-8
+        cd quick-print/test-prj
+        pulltestdata.bat
+        
+    - name: install requirements
+      shell: bash
+      run: |
+        set PYTHONIOENCODING=utf-8
+        cd quick-print/tools/external_lib
+        pip install -r requirements.txt
     
-      - uses: lukka/get-cmake@latest
-
-      - uses: actions/checkout@v3
-        with:
-          submodules: recursive
-
-      - name: show payload
-        run: |
-          echo "Client payload: ${{ toJson(github.event.client_payload) }}"
-      # - name: Set up Python
-      #   uses: actions/setup-python@v2
-      #   with:
-      #     python-version: '3.8'
-
-      - name: Install dding on non-Windows
-        if: runner.os != 'Windows'
-        run: |
-          pip install dding
-          mkdir -p ~/.dding
-          dding_secret="${{ github.event.client_payload.dding_secret || env.DEFAULT_DDING_SECRET }}"
-          dding_token="${{ github.event.client_payload.dding_token || env.DEFAULT_DDING_TOKEN }}"
-          cat <<EOF > ~/.dding/config.json
-          [
-              {
-                  "group": "default",
-                  "secret": "$dding_secret",
-                  "token": "$dding_token"
-              }
-          ]
-          EOF
-      
-      - name: Install dding on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          pip install dding
-          New-Item -Path $HOME\.dding -ItemType Directory -Force
-          $dding_secret = "${{ github.event.client_payload.dding_secret || env.DEFAULT_DDING_SECRET }}"
-          $dding_token = "${{ github.event.client_payload.dding_token || env.DEFAULT_DDING_TOKEN }}"
-          $config = @"
-          [
-              {
-                  "group": "default",
-                  "secret": "$dding_secret",
-                  "token": "$dding_token"
-              }
-          ]
-          "@
-          $config | Out-File -FilePath $HOME\.dding\config.json -Encoding utf8
-      # - name: Set up proxy
-      #   run: |
-      #     git config --global http.proxy socks5://python:psdemo982@123.60.164.114:11654
-
-
-      - name: Clone repository from Gitee with trace
-        shell: pwsh
-        run: |
-          # $env:GIT_TRACE = "1"
-          git clone https://oauth2:${{ secrets.MYUSER_TOKEN }}@${{ github.event.client_payload.gitaddress }}
+    - name: Download External Lib
+      run: |
+        set PYTHONIOENCODING=utf-8
+        cd quick-print/tools/external_lib
+        pip install -r requirements.txt
+        python download.py --arch x64 --build_types dbg --mul
+        python download.py --arch x64 --build_types rel --mul
+  
+        # 检查 download_freeimage.bat 是否存在，如果存在则执行
+        # if (Test-Path "download_freeimage.bat") {
+        #   Write-Host "Found download_freeimage.bat, executing..."
+        #   cmd /c "download_freeimage.bat"
+        # } else {
+        #   Write-Host "download_freeimage.bat not found, skipping..."
+        # }
         
-          # git clone git@gitee.com:charlesabc/quick-print.git
-          # git clone https://oauth2:${{ secrets.GITEE_TOKEN }}@gitee.com/charlesabc/quick-print.git 
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v2
-
-      # - name: test cat
-      #   shell: bash
-      #   run: |
-      #     set PYTHONIOENCODING=utf-8
-      #     cd quick-print
-      #     git log -n 5
-      #     cat external\\common\\include\\wrapper_logger.h
-          
-      - name: install requirements
-        shell: bash
-        run: |
-          set PYTHONIOENCODING=utf-8
-          cd quick-print/tools/external_lib
-          pip install -r requirements.txt
-
-      # - name: Cache External Libraries
-      #   id: cache-external-libs
-      #   uses: actions/cache@v3
-      #   with:
-      #     path: quick-print/external
-      #     key: ${{ runner.os }}-external-libs-${{ hashFiles('quick-print/tools/external_lib/libs.yaml', 'quick-print/tools/external_lib/download.py') }}
-      #     restore-keys: |
-      #       ${{ runner.os }}-external-libs-
-
-      # - name: Set cache status environment variable
-      #   shell: pwsh
-      #   run: |
-      #     if ("${{ steps.cache-external-libs.outputs.cache-hit }}" -eq "true") {
-      #       echo "EXTERNAL_LIBS_CACHED=true" >> $env:GITHUB_ENV
-      #       Write-Host "External libraries found in cache, skipping download"
-      #     } else {
-      #       echo "EXTERNAL_LIBS_CACHED=false" >> $env:GITHUB_ENV
-      #       Write-Host "External libraries not in cache, will download"
-      #     }
-
-      - name: Download External Lib
-        if: env.EXTERNAL_LIBS_CACHED != 'true'
-        run: |
-          set PYTHONIOENCODING=utf-8
-          cd quick-print/tools/external_lib
-          pip install -r requirements.txt
-          python download.py --arch x64 --build_types dbg --mul
-          python download.py --arch x64 --build_types rel --mul
-          
-      - name: CMake
-        shell: powershell
-        run: |
-          pwd
-          dir 
-          cd quick-print/build
-          cmake ../ -G "Visual Studio 17 2022" 
-          # run CMake (additional options like -DCMAKE_EXPORT_COMPILE_COMMANDS=TRUE are possible)
-          # it is recommended to specify the compiler version used for the build
-          # cmake -S . -B cbuild/ -DCRASHPAD_BUILD_EXAMPLES=TRUE -DCMAKE_CXX_COMPILER=cl.exe -DCMAKE_C_COMPILER=cl.exe -DCMAKE_BUILD_TYPE=Release
-          # cmake --build cbuild/ --config Release -- /p:Configuration=Release
-          
-      # - name: Build WebView
-      #   run: |
-      #     pwd
-      #     dir 
-      #     cd quick-print/WebView
-      #     mkdir build
-      #     cd build
-      #     cmake ../ -DBUILD_WXWIDGETS_EXAMPLES=ON -DBUILD_WEBVIEW_EXAMPLES=ON -DBUILD_ADVANCED_WXWIDGETS_EXAMPLE=ON
-      #     cmake --build .
-      # - name: Build Office
-      #   run: |
-      #     pwd 
-      #     dir 
-      #     cd quick-print/officeConvert
-      #     mkdir build
-      #     cd build
-      #     cmake ../ BUILD_OFFICE_CONVERT_LIB=ON -DBUILD_TESTS=ON -DENABLE_GTEST=ON BUILD_OFFICE_CONVERT_DLL=ON BUILD_OFFICE_CONV_TOOL=ON BUILD_GUI_ASYNC_EXAMPLE=ON
-      #     cmake --build .
-
-
-      # - name: test cat1
-      #   shell: bash
-      #   run: |
-      #     set PYTHONIOENCODING=utf-8
-      #     cd quick-print
-      #     git log -n 5
-      #     cat external\\common\\include\\wrapper_logger.h
-      #     git status
-      #     git diff external/common/include/wrapper_logger.h
-
-          
-      - name: Build with MSBuild
-        run: msbuild -m -t:Build -p:Configuration=${{ matrix.configuration }} /p:Platform=${{ matrix.platform }} quick-print/build/quick-print.sln
+    # - name: 📦 创建构建目录
+    #   run: |
+    #     if (Test-Path build) { Remove-Item -Recurse -Force build }
+    #     mkdir quick-print/build
+    #   shell: pwsh
         
-
-      - name: test_run
-        shell: cmd
-        run: |
-          dir 
-          cd quick-print
-          dir 
-          # dir quick-print\librel64
-          cd librel64
-          dir 
-          
-          cd quick-print\test-prj
-          #pulltestdata.bat
-          git clone https://oauth2:${{ secrets.MYUSER_TOKEN }}@github.com/quickprint-soft/quick-print-test-data.git
-          cd ../quick-print/librel64
-          gtest_run.exe --gtest_output=xml:report.xml
-          dir
-
-      - name: Show gtest XML in log (first 200 lines)
-        if: always()
-        shell: pwsh
-        run: |
-          $path = "quick-print/librel64/report.xml"
-          if (Test-Path $path) {
-            Write-Host "===== Begin report.xml (truncated) ====="
-            Get-Content $path -TotalCount 200 | ForEach-Object { Write-Host $_ }
-            Write-Host "===== End report.xml snippet ====="
-          } else { Write-Host "report.xml not found at $path" }
-
-      - name: Generate Markdown summary
-        if: always()
-        shell: bash
-        run: |
-          python generate_gtest_md.py --xml quick-print/librel64/report.xml --summary-env --max-fail 100 --truncate-message 400
-
-      - name: Upload test report artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: gtest-report
-          path: quick-print/librel64/report.xml
-          retention-days: 7
-
-      - name: Publish Test Results (JUnit)
-        if: always()
-        uses: mikepenz/action-junit-report@v4
-        with:
-          report_paths: quick-print/librel64/report.xml
-          require_tests: true
-          annotate_only: true
-
-      # - name: Inno Package
-      #   shell: cmd
-      #   run: |
-      #     ls
-      #     cd quick-print\setup\exe || exit /b 1
-      #     build.bat || exit /b 1
-          
-      #     build_update.bat || exit /b 1
-      # - name: Inno update Package
-      #   shell: cmd
-      #   run: |
-      #     ls
-      #     cd quick-print\setup\exe || exit /b 1
-      #     build_update.bat || exit /b 1
-      # - name: cp update to download server 
-      #   shell: bash 
-      #   run: |
-      #     echo " copy to download server"
-      #     ls
-      #     cd quick-print/setup/exe 
-      #     ls Output
-      #     bash copy.sh
-      # - name: Check Status
-      #   if: ${{ success() }}
-      #   shell: pwsh
-      #   run: |
-      #     $repoName = $env:GITHUB_REPOSITORY.Split('/')[-1]
-      #     Write-Host "Workflow succeeded for $repoName!"
-      #     dding "github action success :) for $repoName"
-          
-      # - name: Check Status
-      #   if: ${{ failure() }}
-      #   shell: pwsh
-      #   run: |
-      #     $repoName = $env:GITHUB_REPOSITORY.Split('/')[-1]
-      #     Write-Host "Workflow failed for $repoName!"
-      #     dding "github action fail :( $repoName"
-      # - name: Ls dir
-      #   run: |
-      #     echo "%cd%"
-      #     dir
-      #     cd quick-print
-      #     dir 
-          
-      # - name: Archive binaries
-      #   uses: actions/upload-artifact@v4
-      #   with:
-      #     name: librel64
-      #     path: |
-      #       quick-print\librel64
-      #     retention-days: 1 # <= 这里可以设置保留天数
-
-      # - name: Archive binaries
-      #   uses: actions/upload-artifact@v4
-      #   with:
-      #     name: QuickPrintSetupArtifact
-      #     path: |
-      #       quick-print\setup\exe\Output\QuickPrintSetup.exe
-      #       quick-print\setup\exe\Output\QuickPrintUpdateSetup.exe
-      #     retention-days: 1 # <= 这里可以设置保留天数
-
-      # # - name: Archive binaries
-      # #   uses: actions/upload-artifact@v4
-      # #   with:
-      # #     name: QuickPrintSetupArtifact
-      # #     path: |
-            
-      # #     retention-days: 1 # <= 这里可以设置保留天数
-
-
-  # create-release:
-  #   runs-on: ubuntu-latest
-  #   needs: msw-msvs
-  #   steps:
-  #     - name: Checkout
-  #       uses: actions/checkout@v4
-
-  #     - name: Set up environment
-  #       run: echo "RELEASE_DATE=$(date +'%Y%m%d')" >> $GITHUB_ENV
-
-  #     - name: Install GitHub CLI
-  #       uses: sersoft-gmbh/setup-gh-cli-action@v2
-
-  #     - name: Delete existing release
-  #       env:
-  #         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  #       run: gh release delete $RELEASE_DATE --yes || true
-
-  #     - name: Create new release
-  #       env:
-  #         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  #       run: gh release create $RELEASE_DATE -t "Release $RELEASE_DATE" -n "Automated release for $RELEASE_DATE"
-
-
-  #     - name: Download Artifacts
-  #       uses: actions/download-artifact@v4
-  #       with:
-  #         path: ./artifacts
-
-  #     - name: zip Artifacts
-  #       run: |
-  #         ls ./artifacts
-  #         cd ./artifacts
-  #         rm -fr librel64/static
-  #         rm -fr librel64/dll
-          
-  #         mv librel64 QuickPrintAll
-          
-          
-  #         zip -r QuickPrintAll.zip QuickPrintAll
-          
-          
-          
-  #     - name: Generate MD5 Checksums
-  #       run: |
-  #         > ./artifacts/filelist.txt  # 清空或创建 filelist.txt 文件
-  #         for file in ./artifacts/*.{zip,exe}; do
-  #           # Calculate MD5 checksum
-  #           md5sum=$(md5sum "$file" | awk '{ print $1 }')
+    - name: ⚙️ 配置 CMake
+      working-directory: quick-print/build
+      run: cmake .. -G "Visual Studio 17 2022" -A x64
       
-  #           # Write to filelist.txt
-  #           echo "$(basename "$file") | ${md5sum}" >> ./artifacts/filelist.txt
-  #         done
+    # - name: 🔨 编译项目 (Release)
+    #   working-directory: quick-print/build
+    #   run: cmake --build . --target gtest_run --config Release --parallel
 
-  #     - name: Upload Artifacts to Release
-  #       env:
-  #         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  #       run: |
-  #         cd ./artifacts
-  #         gh release upload $RELEASE_DATE ./*.zip
-  #         gh release upload $RELEASE_DATE ./QuickPrintSetupArtifact/*.exe
-  #         gh release upload $RELEASE_DATE filelist.txt
+    - name: 🔨 Build WebView
+      run: |
+        pwd
+        dir 
+        cd quick-print/WebView
+        mkdir build
+        cd build
+        cmake ../ -DBUILD_WXWIDGETS_EXAMPLES=ON -DBUILD_WEBVIEW_EXAMPLES=ON -DBUILD_ADVANCED_WXWIDGETS_EXAMPLE=ON
+        cmake --build .
+    - name: 🔨 Build Office
+      run: |
+        pwd 
+        dir 
+        cd quick-print/officeConvert
+        mkdir build
+        cd build
+        cmake ../ BUILD_OFFICE_CONVERT_LIB=ON -DBUILD_TESTS=ON -DENABLE_GTEST=ON BUILD_OFFICE_CONVERT_DLL=ON BUILD_OFFICE_CONV_TOOL=ON BUILD_GUI_ASYNC_EXAMPLE=ON
+        cmake --build .
+    # - name: test cat1
+    #   shell: bash
+    #   run: |
+    #     set PYTHONIOENCODING=utf-8
+    #     cd quick-print
+    #     git log -n 5
+    #     cat external\\common\\include\\wrapper_logger.h
+    #     git status
+    #     git diff external/common/include/wrapper_logger.h
+
+        
+    - name: 🔨 Build with MSBuild
+      run: msbuild -m -t:Build -p:Configuration=${{ matrix.configuration }} /p:Platform=${{ matrix.platform }} quick-print/build/quick-print.sln
+        
+    - name: 📂 准备测试报告目录
+      run: |
+        if (Test-Path test_reports) { Remove-Item -Recurse -Force test_reports }
+        mkdir test_reports
+      shell: pwsh
+        
+    - name: 🧪 运行 GTest 测试套件
+      working-directory: quick-print
+      run: |
+        $env:PATH += ";$PWD\librel64"
+        .\librel64\gtest_run.exe --gtest_output=xml:test_reports/test_results.xml --gtest_print_time=1
+        $testExitCode = $LASTEXITCODE
+        echo "TEST_EXIT_CODE=$testExitCode" >> $env:GITHUB_ENV
+        exit 0
+      shell: pwsh
+      continue-on-error: true
+      
+    - name: 📊 生成 HTML 测试报告
+      working-directory: quick-print/test-prj
+      if: always()
+      env:
+        PYTHONIOENCODING: utf-8
+        PYTHONUTF8: "1"
+      run: |
+        chcp 65001 >NUL
+        python -X utf8 generate_test_report.py -i ../test_reports/test_results.xml -o ../test_reports/test_report.html
+      continue-on-error: true
+      shell: pwsh
+      
+    - name: 📝 生成测试摘要
+      if: always()
+      run: |
+        if (Test-Path test_reports/test_results.xml) {
+          $xml = [xml](Get-Content test_reports/test_results.xml)
+          $testsuites = $xml.testsuites
+          $total = $testsuites.tests
+          $failures = $testsuites.failures
+          $errors = $testsuites.errors
+          $time = $testsuites.time
+          $passed = [int]$total - [int]$failures - [int]$errors
+          $passRate = if ([int]$total -gt 0) { [math]::Round(($passed / [int]$total) * 100, 2) } else { 0 }
           
-  #     - name: LS Artifacts
-  #       run: |
-  #         ls 
-  #         ls ./artifacts
-  # # dingding-error:
-  # #   runs-on: ubuntu-latest
-  # #   needs: [create-release]
-  # #   if: ${{ failure() }}
-  # #   steps:
-  # #     - uses: actions/checkout@v4
-  # #     - name: Send dingding notify error
-  # #       uses: zcong1993/actions-ding@master
-  # #       with:
-  # #         dingToken: ${{ github.event.client_payload.dding_token.token }} | DEFAULT_DDING_TOKEN #钉钉token
-  # #         secret: ${{ github.event.client_payload.dding_token.secret }} | DEFAULT_DDING_SECRET
-  # #         body: |
-  # #           {
-  # #             "msgtype": "text",
-  # #             "text": {
-  # #                 "content": 'status:[打叉][打叉][打叉]  quick_print 执行失败\n提交者:  test\n${{ github.ref_type }}: master\nlog: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
-  # #            }
-  # #            }
-            
-  # # dingding-success:
-  # #   runs-on: ubuntu-latest
-  # #   if: ${{ success() }}
-  # #   needs: [create-release]
-  # #   steps:
-  # #     - uses: actions/checkout@v4
-  # #     - name: Send dingding notify success
-  # #       uses: zcong1993/actions-ding@master
-  # #       with:
-  # #         dingToken: ${{ github.event.client_payload.dding_token.token }} | DEFAULT_DDING_TOKEN #钉钉token
-  # #         secret: ${{ github.event.client_payload.dding_token.secret }} | DEFAULT_DDING_SECRET
-  # #         body: |
-  # #           {
-  # #            "msgtype": "text",
-  # #            "text": {
-  # #                "content": 'status:[对勾][对勾][对勾][100分]  quick_print 执行成功\n提交者: test\n${{ github.ref_type }}: master\nlog: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
-  # #            }
-  # #            }
+          echo "## 🧪 GTest 测试结果" >> $env:GITHUB_STEP_SUMMARY
+          echo "" >> $env:GITHUB_STEP_SUMMARY
+          echo "| 指标 | 数值 |" >> $env:GITHUB_STEP_SUMMARY
+          echo "|------|------|" >> $env:GITHUB_STEP_SUMMARY
+          echo "| ✅ 通过 | $passed / $total |" >> $env:GITHUB_STEP_SUMMARY
+          echo "| ❌ 失败 | $failures |" >> $env:GITHUB_STEP_SUMMARY
+          echo "| ⚠️ 错误 | $errors |" >> $env:GITHUB_STEP_SUMMARY
+          echo "| 📈 通过率 | $passRate% |" >> $env:GITHUB_STEP_SUMMARY
+          echo "| ⏱️ 总耗时 | $time 秒 |" >> $env:GITHUB_STEP_SUMMARY
+          echo "" >> $env:GITHUB_STEP_SUMMARY
+          
+          if ([int]$failures -gt 0 -or [int]$errors -gt 0) {
+            echo "### ⚠️ 存在失败的测试用例" >> $env:GITHUB_STEP_SUMMARY
+            echo "" >> $env:GITHUB_STEP_SUMMARY
+            echo "请查看 [测试报告](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) 了解详情。" >> $env:GITHUB_STEP_SUMMARY
+          } else {
+            echo "### ✅ 所有测试通过！" >> $env:GITHUB_STEP_SUMMARY
+          }
+        }
+      shell: pwsh
+
+
+    - name: 列出测试报告文件
+      run: |
+        ls -l quick-print/test_reports/
+        file quick-print/test_reports/test_report.html || true
+    
+    - name: 加载 SSH 私钥
+      uses: webfactory/ssh-agent@v0.5.3
+      with:
+        ssh-private-key: ${{ secrets.SSH_KEY }}
+
+    # - name: 调试 SSH (Bash)
+    #   shell: bash
+    #   run: |
+    #     echo "ssh-add -l 输出："
+    #     ssh-add -l || echo "没有加载到任何密钥"
+    
+    #     echo "派生公钥："
+    #     ssh-keygen -y -f <(printf "%s" "${{ secrets.SSH_KEY }}") || echo "无法派生公钥"
+    
+    #     echo "测试 SSH 连接："
+    #     ssh -vvv -o StrictHostKeyChecking=no xhpadmin@download.happygogo.site 'echo 远端OK'
+        
+    # - name: 查看已加载的密钥指纹
+    #   run: |
+    #     echo "ssh-add -l 输出："
+    #     ssh-add -l || echo "没有加载到任何密钥"
+    
+    #     # 从私钥派生公钥，方便与你服务器的 authorized_keys 对比
+    #     echo "派生公钥："
+    #     ssh-keygen -y -f <(printf "%s" "${{ secrets.SSH_KEY }}") || echo "无法派生公钥"
+
+      
+    # - name: upload testfile
+    #   shell: bash
+    #   run: |
+    #     scp  -o StrictHostKeyChecking=no quick-print/test_reports/test_report.html xhpadmin@download.happygogo.site:/www/wwwroot/download.happygogo.site/quick-print-test-report
+
+    - name: 上传测试报告（当前时间戳）
+      shell: bash
+      run: |
+        set -e
+    
+        # 如果想用东八区本地时间并且 runner 仍是 UTC，可用 date -u 加 8 小时（Ubuntu 可用）
+        # TIMESTAMP=$(date -u -d '+8 hour' '+%Y-%m-%d-%H%M%S')
+    
+        # 如果已经把系统时区改成 Asia/Shanghai 或不强制东八区，就直接：
+        TIMESTAMP=$(date '+%Y-%m-%d-%H%M%S')
+    
+        LOCAL_FILE="quick-print/test_reports/test_report.html"
+        # REMOTE_DIR="/www/wwwroot/download.happygogo.site/quick-print-test-report"
+        # REMOTE_HOST="download.happygogo.site"
+        #REMOTE_USER="xhpadmin"
+        REMOTE_USER=${{ github.event.client_payload.publish_user }}
+        REMOTE_HOST=${{ github.event.client_payload.publish_host }}
+        REMOTE_DIR=${{ github.event.client_payload.publish_path }}/quick-print-test-report
+    
+        # 确保存在
+        ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} "mkdir -p ${REMOTE_DIR}"
+    
+        # 1. 上传并覆盖最新版本
+        scp -o StrictHostKeyChecking=no "${LOCAL_FILE}" ${REMOTE_USER}@${REMOTE_HOST}:${REMOTE_DIR}/test_report.html
+    
+        # 2. 远端复制带时间戳归档
+        ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} \
+          "cp ${REMOTE_DIR}/test_report.html ${REMOTE_DIR}/test_report-${TIMESTAMP}.html"
+    
+        echo "已上传：最新 test_report.html 与归档 test_report-${TIMESTAMP}.html"
+    
+      
+    # - name: 📤 上传测试报告 (Artifacts)
+    #   uses: actions/upload-artifact@v4
+    #   if: always()
+    #   with:
+    #     name: test-reports-${{ github.run_number }}
+    #     path: |
+    #       # quick-print/test_reports/test_results.xml
+    #       quick-print/test_reports/test_report.html
+    #     retention-days: 30
+        
+    # - name: 📊 发布测试结果到 PR
+    #   uses: EnricoMi/publish-unit-test-result-action/windows@v2
+    #   if: always() && github.event_name == 'pull_request'
+    #   with:
+    #     files: test_reports/test_results.xml
+    #     check_name: 🧪 GTest 测试结果
+    #     comment_title: 📊 GTest 测试报告
+    #     comment_mode: always
+        
+    # - name: ✅ 检查测试结果
+    #   if: always()
+    #   run: |
+    #     if ($env:TEST_EXIT_CODE -ne "0") {
+    #       Write-Host "❌ 测试失败！退出码: $env:TEST_EXIT_CODE"
+    #       exit 1
+    #     } else {
+    #       Write-Host "✅ 所有测试通过！"
+    #     }
+    #   shell: pwsh
