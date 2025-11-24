@@ -255,7 +255,7 @@ jobs:
         #REMOTE_USER="xhpadmin"
         REMOTE_USER=${{ github.event.client_payload.publish_user }}
         REMOTE_HOST=${{ github.event.client_payload.publish_host }}
-        REMOTE_DIR=${{ github.event.client_payload.publish_path }}/quick-print-test-report
+        REMOTE_DIR=${{ github.event.client_payload.publish_path }}
     
         # 确保存在
         ssh -o StrictHostKeyChecking=no ${REMOTE_USER}@${REMOTE_HOST} "mkdir -p ${REMOTE_DIR}"
